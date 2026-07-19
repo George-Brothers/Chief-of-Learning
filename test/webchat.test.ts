@@ -2,22 +2,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FULL_ENV } from "./helpers";
 
 const routeCommand = vi.fn();
-vi.mock("../lib/command", () => ({ routeCommand }));
-
-const answerQuestion = vi.fn(async () => "了 marks completed action.");
-vi.mock("../lib/ai", () => ({ answerQuestion }));
-
-const readStudyMap = vi.fn(async () => "IC Lesson 4");
-const readLedger = vi.fn(async () => "knows 我 你");
-vi.mock("../lib/notion", () => ({ readStudyMap, readLedger }));
+// Questions are answered INSIDE routeCommand (intents "answer"/"answer_log"); the only thing it
+// declines is intent "log", which must be filed — see test/webchat-log.test.ts for that end to end.
+const logTextMessage = vi.fn(async () => "📝 Got it — did 30 min of tone drills.\n加油 (jiāyóu)!");
+vi.mock("../lib/command", () => ({ routeCommand, logTextMessage }));
 
 describe("respondToMessage (web chat = same brain as Telegram)", () => {
   beforeEach(() => {
     Object.assign(process.env, FULL_ENV, { TELEGRAM_ALLOWED_CHAT_ID: "42" });
     routeCommand.mockReset();
-    answerQuestion.mockClear();
-    readStudyMap.mockClear();
-    readLedger.mockClear();
+    logTextMessage.mockReset();
+    logTextMessage.mockResolvedValue("📝 Got it — did 30 min of tone drills.\n加油 (jiāyóu)!");
   });
 
   it("routes commands through routeCommand and returns the collected reply", async () => {
@@ -30,20 +25,39 @@ describe("respondToMessage (web chat = same brain as Telegram)", () => {
     expect(out.handledAs).toBe("command");
     expect(out.reply).toContain("Lesson 5");
     expect(routeCommand).toHaveBeenCalledWith("/cards lesson 5", "42", expect.any(Function));
-    expect(answerQuestion).not.toHaveBeenCalled();
+    expect(logTextMessage).not.toHaveBeenCalled();
   });
 
-  it("falls back to answerQuestion for non-commands, against the live brain", async () => {
-    routeCommand.mockResolvedValue(false);
+  it("answers a question through routeCommand, which owns the 'answer' intent", async () => {
+    routeCommand.mockImplementation(async (_m: string, _c: string, reply: (t: string) => Promise<void>) => {
+      await reply("了 marks completed action.");
+      return true;
+    });
     const { respondToMessage } = await import("../lib/webchat");
     const out = await respondToMessage("what does 了 do?");
-    expect(out.handledAs).toBe("answer");
+    expect(out.handledAs).toBe("command");
     expect(out.reply).toContain("了");
-    expect(answerQuestion).toHaveBeenCalledOnce();
-    // brain context is assembled from Study Map + Ledger, like the Telegram question path.
-    const brainArg = answerQuestion.mock.calls[0][1];
-    expect(brainArg).toContain("IC Lesson 4");
-    expect(brainArg).toContain("knows 我 你");
+    expect(logTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("FILES what the router declines instead of answering it — dashboard study is not lost", async () => {
+    // The bug: routeCommand returns false only for intent "log", and this adapter used to fall through
+    // to a Q&A answer. No distil, no evidence row, no cards — reported study vanished.
+    routeCommand.mockResolvedValue(false);
+    const { respondToMessage } = await import("../lib/webchat");
+    const out = await respondToMessage("did 30 min of tone drills");
+    expect(out.handledAs).toBe("log");
+    expect(logTextMessage).toHaveBeenCalledWith("did 30 min of tone drills", "42", "web");
+    expect(out.reply).toContain("30 min of tone drills");
+  });
+
+  it("still replies, and never claims it filed, when the evidence write throws", async () => {
+    routeCommand.mockResolvedValue(false);
+    logTextMessage.mockRejectedValue(new Error("notion 503"));
+    const { respondToMessage } = await import("../lib/webchat");
+    const out = await respondToMessage("did 30 min of tone drills");
+    expect(out.reply).toMatch(/couldn't save/i);
+    expect(out.reply).not.toMatch(/Got it/);
   });
 
   it("short-circuits empty input without touching the brain", async () => {
@@ -52,7 +66,7 @@ describe("respondToMessage (web chat = same brain as Telegram)", () => {
     expect(out.handledAs).toBe("answer");
     expect(out.reply).toMatch(/加油/);
     expect(routeCommand).not.toHaveBeenCalled();
-    expect(answerQuestion).not.toHaveBeenCalled();
+    expect(logTextMessage).not.toHaveBeenCalled();
   });
 
   it("gives a default ack when a command produced no text", async () => {

@@ -1,11 +1,12 @@
 import { getEnv } from "@/lib/env";
-import { distillEvidence, answerQuestion, type Distilled } from "@/lib/ai";
+import { distillEvidence, type Distilled } from "@/lib/ai";
 import { NoProviderError } from "@/lib/models";
 import { addEvidence } from "@/lib/notion";
-import { buildQuestionBrain } from "@/lib/brain";
 import { sendMessage, getFileBytes } from "@/lib/telegram";
-import { makeDeckFromVocab } from "@/lib/deck";
-import { routeCommand, consumePendingListening, autoCloseAssignmentFromEvidence } from "@/lib/command";
+import { enqueueCards } from "@/lib/actions";
+import { getAgentStatus, cardsQueuedMessage } from "@/lib/agent-status";
+import { routeCommand, consumePendingListening, autoCloseAssignmentFromEvidence, logTextMessage } from "@/lib/command";
+import { acknowledgeEvidence, NOTHING_NEW_LINE } from "@/lib/ack";
 
 export const runtime = "nodejs";
 // Raise the function timeout like the other AI routes (chat=60, daily-brief/ingest=120). EVERY
@@ -22,11 +23,6 @@ type TgMessage = {
   caption?: string;
   photo?: Array<{ file_id: string }>;
   document?: { file_id: string; mime_type?: string; file_name?: string };
-};
-
-const isQuestion = (t: string) => {
-  const s = t.trim();
-  return s.endsWith("?") || s.endsWith("？") || /^q:/i.test(s);
 };
 
 function todayLabel(): string {
@@ -92,16 +88,26 @@ export async function POST(req: Request): Promise<Response> {
 async function handle(msg: TgMessage, chatId: string): Promise<void> {
   const text = msg.text?.trim();
 
-  // Command layer: on-demand Chief of Staff work. Falls through for non-commands.
-  if (text && (await routeCommand(text, chatId))) return;
-  // A pending listening check consumes the next text reply as its answer.
+  // A pending listening check consumes the next text reply as its answer — BEFORE classifying.
+  // Order is load-bearing: the classifier is told to prefer "answer" when unsure, so a bare cloze
+  // reply like "跳舞" classifies as a question and gets *explained* instead of scored, and this line
+  // becomes unreachable. Checking first can spend a check on a genuine question asked inside the 2h
+  // window, but that failure is visible and self-correcting — the learner sees "❌ It was X", and
+  // re-sending the question is answered normally because nothing is pending any more. The other order
+  // fails silently and permanently: listening is never scored at all. Slash commands are exempt
+  // (guarded inside consumePendingListening) so /status et al. still work while a check is open.
   if (text && (await consumePendingListening(text, chatId))) return;
 
-  // A live question → answer, don't store as evidence.
-  if (text && isQuestion(text)) {
-    const brain = await buildQuestionBrain(text);
-    const answer = await answerQuestion(text, brain);
-    await sendMessage(chatId, answer);
+  // Command layer: on-demand Chief of Staff work, plus every conversational message (intent "answer").
+  // Falls through only for a photo or a "log" check-in the learner wants recorded as evidence — the
+  // classifier makes that call, the route never guesses from punctuation.
+  if (text && (await routeCommand(text, chatId))) return;
+
+  // A text check-in the router declined (intent "log"). Filing lives in lib/command, NOT here: the
+  // dashboard chat calls the same router, and while this handler was the only place that knew what
+  // "returned false" meant, every check-in typed into the dashboard was answered and then dropped.
+  if (text) {
+    await sendMessage(chatId, await logTextMessage(text, chatId, "telegram"));
     return;
   }
 
@@ -158,15 +164,25 @@ async function handle(msg: TgMessage, chatId: string): Promise<void> {
   // If this submission clearly satisfies an open assignment, close it so it stops nagging — no
   // manual /done needed. Conservative: only an unambiguous match closes anything (see command.ts).
   const closed = await autoCloseAssignmentFromEvidence(distilled);
-  if (closed) {
-    await sendMessage(chatId, `✅ Marked done: ${closed.description}. 真棒 (zhēn bàng)!`);
-  }
 
-  // Auto-generate a Pleco deck from any new vocab.
+  // Anki, and ONLY Anki. This path — tutor slides, homework photos, whiteboard shots — is the
+  // learner's biggest source of new words, and it used to produce a Pleco .txt and nothing else: not
+  // one of those words ever reached the SRS deck the whole retention model is built on. The .txt is
+  // gone from here on purpose ("I don't want to get a msg with words to add, I want it to go
+  // directly to Anki") — a file to import is homework, not a result. lib/deck.ts still exists and is
+  // reachable on explicit request (/pleco). Fail-open: a queue error must never lose the evidence
+  // row written above, and must never be reported as a success.
+  let cardLine: string | undefined;
   if (distilled.newVocab.length) {
-    const res = await makeDeckFromVocab(`Tutor ${todayLabel()}`, distilled.newVocab, chatId);
-    if (res.sent) return; // the deck message is the ack
+    try {
+      const queued = await enqueueCards(distilled.newVocab, `tutor ${todayLabel()}`);
+      cardLine = queued > 0 ? cardsQueuedMessage(queued, await getAgentStatus()) : NOTHING_NEW_LINE;
+    } catch (err) {
+      console.error("telegram: evidence logged but cards could not be queued", err);
+      cardLine = `⚠️ I logged this, but couldn't queue the new words for Anki — I'll need a retry.`;
+    }
   }
 
-  await sendMessage(chatId, "Logged.");
+  // The ack is shared with the text path (lib/command) so both surfaces say the same thing.
+  await sendMessage(chatId, acknowledgeEvidence(distilled, closed, cardLine));
 }

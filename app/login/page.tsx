@@ -39,11 +39,10 @@ export default function LoginPage() {
     <div className={styles.root}>
       <div className={styles.loginWrap}>
         <div className={styles.loginCard}>
-          <div className={styles.seal} style={{ margin: "0 auto", width: 52, height: 52, fontSize: 26 }} aria-hidden>
-            露
-          </div>
-          <h1>Lucy · 学习中文</h1>
-          <p>Sign in to your learning command center.</p>
+          <h1>
+            LUCY <em lang="zh-Hans">学习中文</em>
+          </h1>
+          <p>Instrument panel · sign in</p>
           <form className={styles.loginForm} onSubmit={submit}>
             <input
               className={styles.loginInput}
@@ -51,10 +50,14 @@ export default function LoginPage() {
               autoFocus
               value={password}
               placeholder="Dashboard password"
+              aria-label="Dashboard password"
+              aria-invalid={error ? true : undefined}
               onChange={(e) => setPassword(e.target.value)}
               disabled={busy}
             />
-            <div className={styles.loginError}>{error}</div>
+            <div className={styles.loginError} role="status">
+              {error}
+            </div>
             <button className={styles.send} type="submit" disabled={busy || !password}>
               {busy ? "Signing in…" : "Sign in"}
             </button>

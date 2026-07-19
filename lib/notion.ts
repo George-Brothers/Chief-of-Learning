@@ -341,6 +341,30 @@ export type ListeningPending = { expected: string; sentence: string; ts: string 
 const LISTEN_SEP = "--- RESULTS ---";
 const readListeningRaw = () => readDoc(env().NOTION_LISTENING_PAGE_ID);
 
+/**
+ * Same cap prependDoc applies to the other append-forever docs (12000 chars). EVERY writer of this
+ * page rewrites it whole by re-appending the entire previous results block, so without a cap the page
+ * grows without bound — and `recordListeningOffer` runs from the DAILY cron, which made that growth
+ * unattended and permanent. Only the newest lines are ever read (getListeningStats takes 20,
+ * getRecentListeningSourceIds takes 3), so dropping the oldest tail costs nothing.
+ *
+ * Cutting at the char cap alone could leave a truncated final line, which
+ * `getRecentListeningSourceIds` would happily parse into a mangled source id — so the trailing
+ * partial line is dropped unless the text was already under the cap.
+ */
+const LISTENING_KEEP_CHARS = 12000;
+
+function capListening(text: string): string {
+  if (text.length <= LISTENING_KEEP_CHARS) return text;
+  const cut = text.slice(0, LISTENING_KEEP_CHARS);
+  const lastNl = cut.lastIndexOf("\n");
+  return lastNl > 0 ? cut.slice(0, lastNl) : cut;
+}
+
+/** Compose + write the whole listening page: a PENDING header line, the separator, then results. */
+const writeListeningDoc = (pending: string, results: string[]) =>
+  writeDoc(env().NOTION_LISTENING_PAGE_ID, capListening([pending, LISTEN_SEP, ...results].join("\n")));
+
 export async function readListeningPending(): Promise<ListeningPending | null> {
   const raw = await readListeningRaw();
   const first = raw.split("\n")[0] ?? "";
@@ -349,26 +373,65 @@ export async function readListeningPending(): Promise<ListeningPending | null> {
   try { return JSON.parse(json) as ListeningPending; } catch { return null; }
 }
 
-export async function writeListeningPending(p: ListeningPending): Promise<void> {
-  const raw = await readListeningRaw();
+/** The results block of an already-read page, newest first. Splitting the raw text we already hold
+ *  keeps every read-modify-write on this page to a SINGLE read — see recordListeningOffer. */
+function splitListening(raw: string): { pending: string; results: string[] } {
   const i = raw.indexOf(LISTEN_SEP);
-  const results = i >= 0 ? raw.slice(i + LISTEN_SEP.length).trim() : "";
-  await writeDoc(env().NOTION_LISTENING_PAGE_ID, `PENDING: ${JSON.stringify(p)}\n${LISTEN_SEP}${results ? "\n" + results : ""}`);
+  const first = raw.split("\n")[0] ?? "";
+  return {
+    pending: first.startsWith("PENDING:") ? first : "PENDING:",
+    results: (i >= 0 ? raw.slice(i + LISTEN_SEP.length).trim() : "")
+      .split("\n").map((l) => l.trim()).filter(Boolean),
+  };
+}
+
+export async function writeListeningPending(p: ListeningPending): Promise<void> {
+  const { results } = splitListening(await readListeningRaw());
+  await writeListeningDoc(`PENDING: ${JSON.stringify(p)}`, results);
 }
 
 export async function recordListeningResult(ok: boolean, word: string, date: string): Promise<void> {
+  const { results } = splitListening(await readListeningRaw());
+  await writeListeningDoc("PENDING:", [`${date} ${ok ? "✓" : "✗"} ${word}`, ...results]);
+}
+
+/** Result-block lines, newest first. Holds both cloze checks ("date ✓ word") and offer lines. */
+export async function listeningResultLines(): Promise<string[]> {
   const raw = await readListeningRaw();
   const i = raw.indexOf(LISTEN_SEP);
-  const results = i >= 0 ? raw.slice(i + LISTEN_SEP.length).trim() : "";
-  const line = `${date} ${ok ? "✓" : "✗"} ${word}`;
-  await writeDoc(env().NOTION_LISTENING_PAGE_ID, `PENDING:\n${LISTEN_SEP}\n${line}${results ? "\n" + results : ""}`);
+  return (i >= 0 ? raw.slice(i + LISTEN_SEP.length).trim() : "").split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
 export async function getListeningStats(): Promise<{ correct: number; total: number }> {
-  const raw = await readListeningRaw();
-  const i = raw.indexOf(LISTEN_SEP);
-  const lines = (i >= 0 ? raw.slice(i + LISTEN_SEP.length).trim() : "").split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 20);
+  // Only cloze-check lines count — the block also carries source-offer lines (see LISTEN_OFFER).
+  const lines = (await listeningResultLines()).filter((l) => l.includes("✓") || l.includes("✗")).slice(0, 20);
   return { correct: lines.filter((l) => l.includes("✓")).length, total: lines.length };
+}
+
+// The listening store was built for cloze checks and carries no notion of a listening SOURCE, so
+// rotation needs somewhere to remember what was already offered. Rather than a new page or a schema
+// change, offers go into the same results block as a distinctly-prefixed line
+// ("2026-07-19 🎧 lazy-chinese,du-chinese"), which the existing writers preserve untouched.
+const LISTEN_OFFER = "🎧";
+
+/** Remember which sources were offered today, so tomorrow's brief can rotate past them. */
+export async function recordListeningOffer(ids: string[], date: string): Promise<void> {
+  if (!ids.length) return;
+  // ONE read: this used to read the page twice (raw for PENDING, then listeningResultLines() again for
+  // the results), so a concurrent write between the two could be half-preserved — the header from one
+  // version of the page, the body from another. Read once, slice, write.
+  const { pending, results } = splitListening(await readListeningRaw());
+  // Unlike recording a result, an offer must NOT consume an outstanding cloze check — keep PENDING.
+  await writeListeningDoc(pending, [`${date} ${LISTEN_OFFER} ${ids.join(",")}`, ...results]);
+}
+
+/** Source ids offered on the last `days` brief runs (newest first, de-duped). */
+export async function getRecentListeningSourceIds(days = 3): Promise<string[]> {
+  const offers = (await listeningResultLines())
+    .filter((l) => l.includes(LISTEN_OFFER))
+    .slice(0, days)
+    .flatMap((l) => l.slice(l.indexOf(LISTEN_OFFER) + LISTEN_OFFER.length).split(",").map((s) => s.trim()));
+  return [...new Set(offers.filter(Boolean))];
 }
 
 /** SRS-confirmed words (Anki mature cards), synced by the local agent. Distinct from the
@@ -379,7 +442,14 @@ export async function getRetainedWords(): Promise<string[]> {
   return [...words];
 }
 
-export type Assignment = { id: string; kind: string; description: string };
+export type Assignment = {
+  id: string;
+  kind: string;
+  description: string;
+  /** Notion's created_time (ISO). Empty when the row predates it or the API omits it. The dashboard
+   *  turns this into "carried N days", which is the whole point of showing an open assignment. */
+  createdTime: string;
+};
 
 export async function addAssignment(a: { kind: string; description: string; date: string }): Promise<string> {
   const page = (await client().pages.create({
@@ -406,6 +476,7 @@ export async function getOpenAssignments(): Promise<Assignment[]> {
     id: r.id,
     kind: r.properties?.Type?.select?.name ?? "",
     description: plainText(r.properties?.Description),
+    createdTime: r.created_time ?? "",
   }));
 }
 
@@ -414,10 +485,25 @@ export async function markAssignmentDone(id: string): Promise<void> {
 }
 
 export const writeToday = (text: string) => writeDoc(env().NOTION_TODAY_PAGE_ID, text);
+/** The post-it Lucy texted this morning, verbatim — the dashboard renders the same thing. */
+export const readToday = () => readDoc(env().NOTION_TODAY_PAGE_ID);
 export const prependDailyLog = (entry: string) => prependDoc(env().NOTION_DAILYLOG_PAGE_ID, entry);
 export const appendLedgerNotes = (notes: string) =>
   prependDoc(env().NOTION_LEDGER_PAGE_ID, notes, 20000);
 export const writeGradebook = (text: string) => writeDoc(env().NOTION_GRADEBOOK_PAGE_ID, text);
+/** Only for maintenance scripts — the coach reads the Study Map, it never rewrites it. */
+export const writeStudyMap = (text: string) => writeDoc(env().NOTION_STUDYMAP_PAGE_ID, text);
+
+/**
+ * The block types on a doc page, in order. readDoc collapses every block to its text and writeDoc
+ * re-emits the whole doc as paragraphs, so a round-trip silently downgrades headings, bulleted lists
+ * and anything else to plain paragraphs. Callers that rewrite a page the learner also edits by hand
+ * (i.e. maintenance scripts) use this to refuse the write instead of flattening their formatting.
+ */
+export const docBlockTypes = async (pageId: string): Promise<string[]> =>
+  (await listBlocks(pageId)).map((b) => String(b.type));
+export const studyMapBlockTypes = () => docBlockTypes(env().NOTION_STUDYMAP_PAGE_ID);
+export const gradebookBlockTypes = () => docBlockTypes(env().NOTION_GRADEBOOK_PAGE_ID);
 
 /** The head teacher's one-line focus for the week, stored on line 1 of the Gradebook. */
 export async function getWeekFocus(): Promise<string> {
@@ -428,6 +514,16 @@ export async function getWeekFocus(): Promise<string> {
 
 // ---- Known words (drives Pleco de-dupe + calibration) --------------------
 
+/** The queue row type the card pipeline uses. Duplicated from lib/agent-status.ts as a literal so
+ *  this module keeps zero imports from the layers above it. */
+const CARD_ACTION_TYPE = "create_anki_cards";
+
+/**
+ * The EXPOSED set: everything the learner has been shown — ledger prose included, since a mention is
+ * exactly what "has been shown" means. Also counts words that only ever went out as a Pleco .txt.
+ * Drives the Pleco de-dupe (don't resend the same file) and the "exposed" figure on the scorecard.
+ * NOT the right filter for card creation — a mention is not a card; see getCardedWords.
+ */
 export async function getKnownWords(): Promise<string[]> {
   const words = new Set<string>();
 
@@ -441,12 +537,74 @@ export async function getKnownWords(): Promise<string[]> {
   });
   for (const r of syl.results as any[]) for (const w of cjkTokens(plainText(r.properties?.Vocab))) words.add(w);
 
-  // 3. Words in decks already generated.
+  // 3. Words in Pleco decks already sent.
   const decks = await client().databases.query({
     database_id: env().NOTION_DECKS_DB_ID,
     page_size: 100,
   });
   for (const r of decks.results as any[]) for (const w of cjkTokens(plainText(r.properties?.Headwords))) words.add(w);
+
+  return [...words];
+}
+
+/**
+ * Every headword we have ever queued as an Anki card — the REAL record of what was carded.
+ *
+ * All non-abandoned states count: "queued" (on its way), "done" (in Anki), "error" (burned, but the
+ * payload is intact and `/agent retry` re-drives it). A row in any of those states means a card for
+ * that word already exists or is already on its way, which is the only honest reason to suppress a
+ * new one.
+ */
+export async function getCardedHeadwords(): Promise<string[]> {
+  const out = new Set<string>();
+  for (const r of await getActionRows(["queued", "done", "error"])) {
+    if (r.type !== CARD_ACTION_TYPE) continue;
+    let payload: { cards?: Array<{ headword?: string }> };
+    try {
+      payload = JSON.parse(r.payload) as { cards?: Array<{ headword?: string }> };
+    } catch {
+      continue; // an unreadable payload tells us nothing about what was carded — never guess
+    }
+    for (const c of payload.cards ?? []) {
+      const h = (c?.headword ?? "").trim();
+      if (h) out.add(h);
+    }
+  }
+  return [...out];
+}
+
+/**
+ * The set that may legitimately suppress making a NEW Anki card.
+ *
+ * NOT `knownWords()`. That set is built by scraping every CJK run out of the Knowledge Ledger with
+ * a regex, so ANY hanzi mentioned anywhere in ledger PROSE counted as carded — including the coach
+ * notes the system writes about itself ("Drill queued: tone pairs for 跳舞", lib/actions.ts). One
+ * such note meant 跳舞 could never become a card again, while the learner was told it was "already
+ * carded", which was false. A mention is not a card.
+ *
+ * What actually records a card is (1) the Action Queue — every `create_anki_cards` row we enqueued
+ * — and (2) the retained-words page, which the local agent syncs from Anki's own mature cards. The
+ * Syllabus Vocab property is kept as well: it is a structured curriculum field, not prose, and a
+ * word the textbook already drills does not need a fresh card. The Decks database stays excluded —
+ * it records what was SENT as a Pleco .txt, and delivery is not knowledge (see getKnownWords).
+ *
+ * Fail-open per source: a Notion hiccup on one of them yields a SMALLER carded set, i.e. a possible
+ * duplicate card (harmless — the agent's findNotes de-dupes again), never a dropped word.
+ */
+export async function getCardedWords(): Promise<string[]> {
+  const words = new Set<string>();
+
+  // 1. Syllabus Index vocab — structured curriculum, queried first so it is the cheapest source.
+  const syl = await client()
+    .databases.query({ database_id: env().NOTION_SYLLABUS_DB_ID, page_size: 100 })
+    .catch(() => ({ results: [] as any[] }));
+  for (const r of syl.results as any[]) for (const w of cjkTokens(plainText(r.properties?.Vocab))) words.add(w);
+
+  // 2. The real card record: everything ever queued for Anki.
+  for (const w of await getCardedHeadwords().catch(() => [] as string[])) words.add(w);
+
+  // 3. What Anki itself reports as retained (mature cards), synced by the local agent.
+  for (const w of cjkTokens(await readRetained().catch(() => ""))) words.add(w);
 
   return [...words];
 }
@@ -627,6 +785,121 @@ export async function getAction(id: string): Promise<{ type: string; payload: st
   } catch {
     return null;
   }
+}
+
+/**
+ * Every queue row in a non-terminal or failed state, in ONE query.
+ *
+ * `getQueuedActions` deliberately shows the agent only what it should execute. This is the other
+ * half: the view a HUMAN needs. Until now a row that ended in Status "error" was written once and
+ * never read by anything, so a batch of vocab could die in the queue and nothing — not the brief,
+ * not the dashboard — would ever say so. These rows are what makes that visible, and `requeueAction`
+ * is what makes them re-drivable instead of a dead end.
+ */
+export type ActionRow = QueuedAction & { status: string; result: string; createdTime: string };
+
+export async function getActionRows(
+  statuses: readonly string[] = ["queued", "error"],
+): Promise<ActionRow[]> {
+  const res = await client().databases.query({
+    database_id: getEnv().NOTION_ACTIONQUEUE_DB_ID,
+    filter: { or: statuses.map((s) => ({ property: "Status", select: { equals: s } })) },
+    sorts: [{ timestamp: "created_time", direction: "descending" }],
+    page_size: 100,
+  });
+  return (res.results as any[]).map((r) => ({
+    id: r.id,
+    type: r.properties?.Type?.select?.name ?? "",
+    payload: plainText(r.properties?.Payload),
+    status: r.properties?.Status?.select?.name ?? "",
+    result: plainText(r.properties?.Result),
+    createdTime: r.created_time ?? "",
+  }));
+}
+
+/** Put a burned row back in front of the agent. The payload is untouched, so the cards are intact. */
+export async function requeueAction(id: string): Promise<void> {
+  await client().pages.update({
+    page_id: id,
+    properties: {
+      Status: { select: { name: "queued" } },
+      Result: { rich_text: toRichText("re-queued by the learner") },
+    },
+  });
+}
+
+// ---- Local-agent heartbeat --------------------------------------------------
+
+/**
+ * Liveness for the laptop agent, stored as a SINGLE self-updating row in the Action Queue.
+ *
+ * Why here and not a new database: the queue row already carries a Type, a Status, a Payload and a
+ * last_edited_time, which is exactly a heartbeat, and it needs no new env var (a new required var
+ * would break the deployed app at boot — lib/env.ts parses on every getEnv call). The row's Status is
+ * "heartbeat", never "queued", so `getQueuedActions` — and therefore the agent's own task feed —
+ * cannot see it. The agent never talks to Notion directly; it POSTs /api/agent/heartbeat and the
+ * cloud writes this.
+ */
+export const HEARTBEAT_TYPE = "agent_heartbeat";
+
+export type AgentHeartbeat = { lastSeenIso: string; ankiReachable?: boolean };
+
+/** Cached across calls in a warm lambda so the common path is one update, not a query + an update. */
+let heartbeatPageId: string | null = null;
+
+async function findHeartbeatRow(): Promise<{ id: string; payload: string; editedIso: string } | null> {
+  const res = await client().databases.query({
+    database_id: getEnv().NOTION_ACTIONQUEUE_DB_ID,
+    filter: { property: "Type", select: { equals: HEARTBEAT_TYPE } },
+    page_size: 1,
+  });
+  const row = (res.results as any[])[0];
+  if (!row) return null;
+  return { id: row.id, payload: plainText(row.properties?.Payload), editedIso: row.last_edited_time ?? "" };
+}
+
+export async function recordAgentHeartbeat(hb: AgentHeartbeat): Promise<void> {
+  const props: any = {
+    Type: { select: { name: HEARTBEAT_TYPE } },
+    Status: { select: { name: "heartbeat" } },
+    Payload: { rich_text: toRichText(JSON.stringify(hb)) },
+    Result: {
+      rich_text: toRichText(
+        `agent seen ${hb.lastSeenIso} · anki ${hb.ankiReachable === undefined ? "unchecked" : hb.ankiReachable ? "reachable" : "unreachable"}`,
+      ),
+    },
+  };
+  const id = heartbeatPageId ?? (await findHeartbeatRow())?.id ?? null;
+  if (id) {
+    try {
+      await client().pages.update({ page_id: id, properties: props });
+      heartbeatPageId = id;
+      return;
+    } catch {
+      // The row was deleted or archived — fall through and make a new one rather than lose liveness.
+      heartbeatPageId = null;
+    }
+  }
+  const page = (await client().pages.create({
+    parent: { database_id: getEnv().NOTION_ACTIONQUEUE_DB_ID },
+    properties: { Name: { title: toRichText("local agent heartbeat") }, ...props },
+  })) as { id: string };
+  heartbeatPageId = page.id;
+}
+
+/** `null` means the agent has never once checked in — which is the truth on this branch today. */
+export async function readAgentHeartbeat(): Promise<AgentHeartbeat | null> {
+  const row = await findHeartbeatRow();
+  if (!row) return null;
+  heartbeatPageId = row.id;
+  try {
+    const parsed = JSON.parse(row.payload) as AgentHeartbeat;
+    if (parsed && typeof parsed.lastSeenIso === "string") return parsed;
+  } catch {
+    /* fall through */
+  }
+  // A mangled payload still proves the row was written: Notion's own edit stamp is the fallback.
+  return row.editedIso ? { lastSeenIso: row.editedIso } : null;
 }
 
 export type SyllabusRow = { chapter: string; section: string; vocab: string; grammar: string };

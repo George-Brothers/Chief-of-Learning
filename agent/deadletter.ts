@@ -64,3 +64,55 @@ export async function readParked(file: string): Promise<ParkedPush | null> {
 export async function unpark(file: string): Promise<void> {
   await unlink(file);
 }
+
+// ---- Cards ------------------------------------------------------------------------------
+//
+// Same principle as a parked transcript, for the other half of the pipeline. A queue row that gets
+// burned (`Status: "error"`) is unrecoverable — `getQueuedActions()` only ever returns "queued", so
+// nothing reads it again. Before ANY burn, the cards are written here, so "we gave up on this task"
+// never means "the vocab is gone". A different suffix keeps these out of listParked()/sweepParked(),
+// which replay transcripts and would not know what to do with a card batch.
+
+const CARDS_SUFFIX = ".cards.json";
+
+export type ParkedCards = {
+  /** The Action Queue row this came from, so the owner can trace it back in Notion. */
+  taskId: string;
+  /** The batch label (`tutor 2026-07-19`), i.e. where these words came from. */
+  label?: string;
+  /** Why we stopped trying. */
+  reason: string;
+  parkedAt: string;
+  cards: unknown[];
+  /** Set instead of `cards` when the payload could not even be parsed — nothing is thrown away. */
+  rawPayload?: string;
+};
+
+export async function parkCards(dir: string, p: Omit<ParkedCards, "parkedAt">): Promise<string> {
+  await mkdir(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const file = join(dir, `${stamp}-${p.taskId}${CARDS_SUFFIX}`);
+  await writeFile(file, JSON.stringify({ ...p, parkedAt: new Date().toISOString() }, null, 2), "utf8");
+  return file;
+}
+
+/** Every parked card batch, for a recovery script or a human. */
+export async function listParkedCards(dir: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+  return names.filter((n) => n.endsWith(CARDS_SUFFIX)).sort().map((n) => join(dir, n));
+}
+
+export async function readParkedCards(file: string): Promise<ParkedCards | null> {
+  try {
+    const p = JSON.parse(await readFile(file, "utf8")) as ParkedCards;
+    return p?.taskId && Array.isArray(p.cards) ? p : null;
+  } catch {
+    return null;
+  }
+}

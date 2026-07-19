@@ -52,4 +52,34 @@ describe("/api/chat", () => {
     const res = await POST(post(null, false));
     expect(res.status).toBe(400);
   });
+
+  // The session cookie alone is not a CSRF defence: a cross-origin `fetch` with a simple
+  // content-type is sent without a preflight, and this route writes Notion and spends tokens.
+  it("refuses a cross-site POST before running the brain", async () => {
+    isAuthed.mockReturnValue(true);
+    const { POST } = await import("@/app/api/chat/route");
+    const res = await POST(
+      new Request("http://x/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "https://evil.example" },
+        body: JSON.stringify({ message: "hi" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(respondToMessage).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-JSON content type before running the brain", async () => {
+    isAuthed.mockReturnValue(true);
+    const { POST } = await import("@/app/api/chat/route");
+    const res = await POST(
+      new Request("http://x/api/chat", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: JSON.stringify({ message: "hi" }),
+      }),
+    );
+    expect(res.status).toBe(415);
+    expect(respondToMessage).not.toHaveBeenCalled();
+  });
 });

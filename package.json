@@ -14,6 +14,7 @@
     "verify:models": "tsx scripts/verify-models.ts",
     "db:migrate": "tsx --env-file=.env.local scripts/db-migrate.ts",
     "sync:index": "tsx --env-file=.env.local scripts/index-sync.ts",
+    "migrate:brain": "tsx --env-file=.env.local scripts/migrate-brain-text.ts",
     "build:hsk": "tsx scripts/build-hsk-data.ts",
     "agent": "tsx --env-file=.env.agent agent/index.ts",
     "recorder": "tsx --env-file=.env.agent agent/recorder/index.ts"

@@ -6,9 +6,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const fetchTasks = vi.fn();
 const completeTask = vi.fn();
 const addCards = vi.fn();
+const parkCards = vi.fn(async () => "/w/.failed/parked.cards.json");
 
 vi.mock("../agent/poll", () => ({ fetchTasks, completeTask }));
 vi.mock("../agent/anki", () => ({ addCards }));
+// Burning a row now REQUIRES parking its cards first (see agent-executor-deadletter.test.ts).
+vi.mock("../agent/deadletter", () => ({ parkCards }));
 
 const cfg = {
   watchDir: "/w", cloudUrl: "http://cloud", secret: "s",
@@ -25,13 +28,14 @@ const ankiClosed = () => Object.assign(new TypeError("fetch failed"), { cause: {
 
 beforeEach(() => {
   vi.resetModules();
-  for (const f of [fetchTasks, completeTask, addCards]) f.mockReset();
+  for (const f of [fetchTasks, completeTask, addCards, parkCards]) f.mockReset();
+  parkCards.mockResolvedValue("/w/.failed/parked.cards.json");
 });
 
 describe("drainTasks", () => {
   it("completes a task and reports what landed", async () => {
     fetchTasks.mockResolvedValue(task());
-    addCards.mockResolvedValue({ added: 1, skipped: 0 });
+    addCards.mockResolvedValue({ added: 1, skipped: 0, failed: [] });
     const { drainTasks } = await import("../agent/executor");
 
     expect(await drainTasks(cfg)).toEqual([{ id: "A1", status: "done", added: 1, skipped: 0 }]);
@@ -45,13 +49,14 @@ describe("drainTasks", () => {
     const { drainTasks } = await import("../agent/executor");
 
     expect(await drainTasks(cfg)).toEqual([{ id: "A1", status: "deferred", error: "fetch failed" }]);
+    expect(parkCards).not.toHaveBeenCalled();
     expect(completeTask).not.toHaveBeenCalled(); // the row stays "queued" — that IS the retry
   });
 
   it("creates the cards on a later drain once Anki is reopened", async () => {
     // End-to-end of the repro's timeline: closed at tick 1, reopened at tick 2, cards must land.
     fetchTasks.mockResolvedValue(task());
-    addCards.mockRejectedValueOnce(ankiClosed()).mockResolvedValueOnce({ added: 1, skipped: 0 });
+    addCards.mockRejectedValueOnce(ankiClosed()).mockResolvedValueOnce({ added: 1, skipped: 0, failed: [] });
     const { drainTasks } = await import("../agent/executor");
 
     expect((await drainTasks(cfg))[0].status).toBe("deferred");
@@ -64,7 +69,7 @@ describe("drainTasks", () => {
     // Cards landed, but the done-report throws (Vercel 5xx mid-redeploy). Burning here — or firing a
     // false failure — would destroy a task whose cards are already in Anki. Leave it queued to re-report.
     fetchTasks.mockResolvedValue(task());
-    addCards.mockResolvedValue({ added: 1, skipped: 0 });
+    addCards.mockResolvedValue({ added: 1, skipped: 0, failed: [] });
     completeTask.mockRejectedValueOnce(new Error("completeTask failed: 503 redeploying"));
     const { drainTasks } = await import("../agent/executor");
 
@@ -76,7 +81,7 @@ describe("drainTasks", () => {
 
   it("re-reports on a later drain once the cloud is back (cards are idempotent)", async () => {
     fetchTasks.mockResolvedValue(task());
-    addCards.mockResolvedValue({ added: 0, skipped: 1 }); // findNotes dedup: nothing re-added
+    addCards.mockResolvedValue({ added: 0, skipped: 1, failed: [] }); // findNotes dedup: nothing re-added
     completeTask.mockRejectedValueOnce(new Error("completeTask failed: 503")).mockResolvedValueOnce(undefined);
     const { drainTasks } = await import("../agent/executor");
 
@@ -92,6 +97,7 @@ describe("drainTasks", () => {
 
     const [r] = await drainTasks(cfg);
     expect(r.status).toBe("burned");
+    expect(parkCards).toHaveBeenCalledOnce(); // never burned without a disk copy
     expect(completeTask).toHaveBeenCalledWith(cfg, "A1", expect.stringContaining("not found"), false);
   });
 
@@ -126,6 +132,20 @@ describe("isTransient", () => {
     const { isTransient } = await import("../agent/executor");
     expect(isTransient(new Error("anki addNote error: cannot create note because it is a duplicate")))
       .toBe(false);
-    expect(isTransient(new SyntaxError("Unexpected token n in JSON at position 2"))).toBe(false);
+  });
+
+  it("treats a malformed RESPONSE from the Anki port as transient, not as a rejected payload", async () => {
+    // See test/agent-nonjson-response.test.ts: a service answering 200 + text/html raises a
+    // SyntaxError out of the response parse. Burning on that destroyed a whole batch on attempt 1.
+    const { isTransient } = await import("../agent/executor");
+    expect(isTransient(new SyntaxError("Unexpected token n in JSON at position 2"))).toBe(true);
+  });
+
+  it("treats an unexplained failure as transient — the fail-safe default", async () => {
+    const { isTransient } = await import("../agent/executor");
+    // The live bug: something else on the AnkiConnect port answering 404. This used to be
+    // "permanent" and destroyed the queue in a single poll cycle.
+    expect(isTransient(new Error("anki findNotes failed: 404 "))).toBe(true);
+    expect(isTransient(new Error("anki addNote failed: 401 unauthorized"))).toBe(true);
   });
 });

@@ -2,7 +2,7 @@
 
 Lucy is a single-user AI coach for learning Mandarin. You talk to it in a Telegram thread: check-ins,
 questions, homework photos, produces flashcards, and more. It diagnoses each lesson, keeps your plan and
-knowledge base in Notion, turns new vocabulary into Pleco flashcard decks, and sends one short brief
+knowledge base in Notion, turns new vocabulary into Anki cards automatically, and sends one short brief
 every morning.
 
 The interesting part is underneath. One reasoning pipeline serves every interface, so a fix lands
@@ -185,7 +185,8 @@ where you are.
 - Text the bot a check-in like "did 30 minutes, tones felt rough" and expect an acknowledgement plus a
   row in the Evidence Inbox.
 - Ask a grammar question and expect a concise answer with no evidence stored.
-- Send a Pleco SRS screenshot and expect a distilled summary, plus a deck file if there are new words.
+- Send a Pleco SRS screenshot and expect a distilled summary, plus a line saying how many new words
+  were queued for Anki (`/pleco` still exports an import file on request).
 - Trigger the brief manually and expect a Today post-it in Notion and a Telegram message:
   ```bash
   curl -H "authorization: Bearer <CRON_SECRET>" https://<app>.vercel.app/api/daily-brief

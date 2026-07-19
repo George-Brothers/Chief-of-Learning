@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { getEnv } from "../lib/env";
+import { getEnv, requireEnvForScript } from "../lib/env";
 import { FULL_ENV } from "./helpers";
 
 /** The `KEY=value` pairs a fresh operator would copy out of the template (comments ignored). */
@@ -69,6 +69,31 @@ describe("getEnv", () => {
       Object.assign(process.env, FULL_ENV, { [k]: "" });
       expect(() => getEnv(), `${k}="" must not boot`).toThrow();
     }
+  });
+
+  /**
+   * `npm run migrate:brain` could not run AT ALL: it touches two Notion pages, but every lib/notion
+   * call goes through getEnv(), which validates the FULL schema — so the script died on
+   * DEEPSEEK_API_KEY / NOTION_SCORECARD_PAGE_ID and friends before reaching Notion. A maintenance
+   * script must be able to declare the slice it uses.
+   */
+  it("requireEnvForScript boots a maintenance script from only the vars it declares", () => {
+    process.env.NOTION_TOKEN = "n";
+    process.env.NOTION_STUDYMAP_PAGE_ID = "sm";
+    process.env.NOTION_GRADEBOOK_PAGE_ID = "gb";
+    const e = requireEnvForScript(["NOTION_TOKEN", "NOTION_STUDYMAP_PAGE_ID", "NOTION_GRADEBOOK_PAGE_ID"]);
+    expect(e.NOTION_TOKEN).toBe("n");
+    expect(e.NOTION_GRADEBOOK_PAGE_ID).toBe("gb");
+    // …and the shared full-schema getEnv() that lib/notion calls internally now parses.
+    expect(() => getEnv()).not.toThrow();
+    // The declared vars keep their real values; the rest are inert placeholders, never real config.
+    expect(getEnv().NOTION_STUDYMAP_PAGE_ID).toBe("sm");
+    expect(getEnv().DEEPSEEK_API_KEY).not.toBe("ds");
+  });
+
+  it("requireEnvForScript still fails loudly on a var the script actually needs", () => {
+    process.env.NOTION_STUDYMAP_PAGE_ID = "sm";
+    expect(() => requireEnvForScript(["NOTION_TOKEN", "NOTION_STUDYMAP_PAGE_ID"])).toThrow(/NOTION_TOKEN/);
   });
 
   // R6: the template omitted vars lib/env.ts requires, so a fresh deploy 500'd on every route. Boot

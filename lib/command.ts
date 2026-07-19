@@ -1,9 +1,13 @@
 import { z } from "zod";
-import { runObject, runText, type Distilled } from "./ai";
+import { runObject, runText, answerQuestion, distillEvidence, type Distilled } from "./ai";
 import { COACH_SYSTEM, CLASSIFY_PROMPT, CARD_ASSEMBLY_PROMPT, STATUS_PROMPT } from "./prompts";
 
 export const IntentSchema = z.object({
-  intent: z.enum(["make_cards", "feedback", "status", "listen", "other"]),
+  // "answer_log" is the HYBRID: a message that both reports work and asks about it. It exists because
+  // the two single intents each lose half of such a message — "answer" replies and files nothing (the
+  // reported study never reaches the scorecard, never closes an assignment, never yields cards), and
+  // "log" files it and leaves the question hanging. See handleAnswerAndLog.
+  intent: z.enum(["make_cards", "feedback", "status", "listen", "answer", "answer_log", "log"]),
   request: z.string(),
 });
 export type Intent = z.infer<typeof IntentSchema>;
@@ -69,18 +73,27 @@ ${ctx.weekFocus || "(not set)"}`,
 
 import { sendMessage } from "./telegram";
 import {
-  getKnownWords, readSyllabus, getRecentLessons, enqueueAction,
+  addEvidence,
+  getKnownWords, getCardedWords, readSyllabus, getRecentLessons,
   readScorecard, readGradebook, readStudyMap, readLedger, getWeekFocus,
   getRetainedWords, getOpenAssignments, markAssignmentDone, type Assignment,
   readListeningPending, writeListeningPending, recordListeningResult, getListeningStats,
   lessonExists, addLesson,
+  getActionRows, requeueAction,
 } from "./notion";
+import { buildQuestionBrain } from "./brain";
 import { runLessonFeedback, distillLesson } from "./lesson";
 import { contentHash } from "../agent/hash";
-import { dispatchActions } from "./actions";
+import { dispatchActions, enqueueCards } from "./actions";
+import { makeDeckFromVocab } from "./deck";
+import {
+  getAgentStatus,
+  cardsQueuedMessage,
+  summarizeCardQueue,
+  CARD_TASK_TYPE,
+} from "./agent-status";
 import { computeCoverage, computePace, observedPerWeek, updateHist, renderComputedBlock } from "./hsk";
-
-const norm = (s: string) => s.replace(/\s+/g, "").trim();
+import { acknowledgeEvidence, NOTHING_NEW_LINE } from "./ack";
 
 /**
  * A reply sink. The command layer used to write straight to Telegram; it now hands each user-facing
@@ -96,25 +109,29 @@ export async function handleMakeCards(
   chatId: string,
   reply: Responder = telegramResponder(chatId),
 ): Promise<void> {
+  // getCardedWords, not getKnownWords: a word that only ever went out as a Pleco .txt is "exposed",
+  // not "known", and filtering on the wider set meant sending a word made it impossible to ever card
+  // it — /cards would answer "you already know those" forever. See lib/notion.ts.
   const [syllabus, lessons, known] = await Promise.all([
     readSyllabus().catch(() => []),
     getRecentLessons(5).catch(() => []),
-    getKnownWords().catch(() => [] as string[]),
+    getCardedWords().catch(() => [] as string[]),
   ]);
   const syllabusDigest = syllabus.map((s) => `${s.chapter}: ${s.vocab}`).join("\n");
   const lessonsDigest = lessons.map((l) => `${l.date}: ${l.summary}`).join("\n");
   const res = await buildCardsForRequest(request, { syllabus: syllabusDigest, lessons: lessonsDigest, known });
-  const knownSet = new Set(known.map(norm));
-  const fresh = res.cards.filter((c) => !knownSet.has(norm(c.headword)));
-  if (fresh.length === 0) {
-    await reply(`Looks like you already know those 🎉 — nothing to make. 加油 (jiāyóu)!`);
+  // The filter lives in enqueueCards (one implementation, shared by every producer); `known` is
+  // handed over so this doesn't re-read Notion for a set it already has.
+  const queued = await enqueueCards(res.cards, res.label, { known });
+  if (queued === 0) {
+    // Not "you already know those" — the filter proves a card exists (or the syllabus covers it),
+    // never that the learner knows the word. Say what was actually checked.
+    await reply(`${NOTHING_NEW_LINE} 加油 (jiāyóu)!`);
     return;
   }
-  await enqueueAction({
-    type: "create_anki_cards",
-    payload: JSON.stringify({ cards: fresh, notify: true, label: res.label }),
-  });
-  await reply(`On it — making ${res.label} cards 💪 (source: ${res.source}). I'll ping you when they're in Anki.`);
+  // Honest wording comes from observed agent state, not from optimism: "I'll ping you when they're
+  // in Anki" implied a working pipeline even while the local agent was down (see lib/agent-status.ts).
+  await reply(`On it — ${res.label} (source: ${res.source}).\n${cardsQueuedMessage(queued, await getAgentStatus())}`);
 }
 
 export async function handleFeedback(
@@ -147,6 +164,71 @@ export async function handleStatus(
   const lsn = await getListeningStats();
   const withLsn = lsn.total > 0 ? `${snapshot}\n🎧 Listening: ${lsn.correct}/${lsn.total} recent` : snapshot;
   await reply(withLsn);
+}
+
+/**
+ * `/agent` — is the thing that makes the cards actually running, and what is stuck?
+ *
+ * This is the manual counterpart to the daily brief's automatic alarm, and the ONLY way a burned
+ * queue row can be re-driven from the phone. Errored rows keep their full payload, so re-queueing
+ * loses nothing: the executor re-reads the same cards, and `addCards` de-dupes against the whole
+ * `Chinese::*` tree, so a batch that partly landed cannot double up.
+ */
+export async function handleAgent(
+  arg: string,
+  chatId: string,
+  reply: Responder = telegramResponder(chatId),
+): Promise<void> {
+  const rows = await getActionRows().catch(() => []);
+  const queue = summarizeCardQueue(rows);
+
+  if (/^(retry|flush|redrive|re-drive)\b/i.test(arg.trim())) {
+    const stuck = rows.filter((r) => r.type === CARD_TASK_TYPE && r.status === "error");
+    if (stuck.length === 0) {
+      await reply(`Nothing failed — there's nothing to retry. 加油 (jiāyóu)!`);
+      return;
+    }
+    let ok = 0;
+    for (const r of stuck) {
+      try {
+        await requeueAction(r.id);
+        ok += 1;
+      } catch (err) {
+        console.error("agent retry: could not re-queue", r.id, err);
+      }
+    }
+    const failed = stuck.length - ok;
+    await reply(
+      `♻️ Re-queued ${ok} failed batch${ok === 1 ? "" : "es"}${failed ? ` (${failed} wouldn't budge — Notion refused)` : ""}. ` +
+        `They go in the moment the laptop agent and Anki are both running.`,
+    );
+    return;
+  }
+
+  const status = await getAgentStatus();
+  const seen = status.lastSeenIso
+    ? `last check-in ${new Date(status.lastSeenIso).toISOString().replace("T", " ").slice(0, 16)} UTC`
+    : `has never checked in`;
+  const anki =
+    status.ankiReachable === undefined
+      ? "Anki: never probed"
+      : status.ankiReachable
+        ? "Anki: reachable"
+        : "Anki: not answering";
+  const presence =
+    status.presence === "online" ? "🟢 running" : status.presence === "offline" ? "🔴 not running" : "⚪ can't tell";
+  const lines = [
+    `Anki agent: ${presence} — ${seen}. ${anki}.`,
+    queue.tasks
+      ? `📇 ${queue.cards || queue.tasks} waiting in ${queue.tasks} batch${queue.tasks === 1 ? "" : "es"}.`
+      : `📇 Queue empty — nothing waiting.`,
+  ];
+  if (queue.erroredTasks) {
+    lines.push(
+      `⚠️ ${queue.erroredTasks} batch${queue.erroredTasks === 1 ? "" : "es"} failed. Send /agent retry to put ${queue.erroredTasks === 1 ? "it" : "them"} back in the queue.`,
+    );
+  }
+  await reply(lines.join("\n"));
 }
 
 export async function handleDone(text: string, chatId: string): Promise<void> {
@@ -243,15 +325,8 @@ export async function handleLesson(
     noteJson: JSON.stringify(note),
     transcript: markdown,
   });
-  if (note.vocabIntroduced.length > 0) {
-    await enqueueAction({
-      type: "create_anki_cards",
-      payload: JSON.stringify({ cards: note.vocabIntroduced, notify: true, label: `lesson ${date}` }),
-    });
-  }
-  const vocabNote = note.vocabIntroduced.length
-    ? ` — ${note.vocabIntroduced.length} new word(s) queued for cards.`
-    : "";
+  const queued = await enqueueCards(note.vocabIntroduced, `lesson ${date}`);
+  const vocabNote = queued ? `\n${cardsQueuedMessage(queued, await getAgentStatus())}` : "";
   await reply(`📚 Logged (${date}): ${note.summary}${vocabNote}`);
 }
 
@@ -275,6 +350,10 @@ export async function handleListen(chatId: string): Promise<void> {
 const normLsn = (s: string) => s.replace(/\s+/g, "").trim();
 
 export async function consumePendingListening(text: string, chatId: string): Promise<boolean> {
+  // Slash commands are never a cloze answer. This matters because the webhook checks for a pending
+  // answer BEFORE routing (see app/api/telegram/route.ts) — without this guard an open check would
+  // swallow /status. It also skips a Notion read on every command.
+  if (text.trim().startsWith("/")) return false;
   const pending = await readListeningPending();
   if (!pending) return false;
   const ageMs = Date.now() - new Date(pending.ts).getTime();
@@ -286,6 +365,139 @@ export async function consumePendingListening(text: string, chatId: string): Pro
     ? `✅ 对! (duì) It was ${pending.expected}. Listening ${stats.correct}/${stats.total} recent. 真棒 (zhēn bàng)!`
     : `❌ It was ${pending.expected}. Listening ${stats.correct}/${stats.total} recent — keep at it. 加油 (jiāyóu)!`);
   return true;
+}
+
+/**
+ * A conversational message — question, advice ask, plan/schedule ask, small talk — answered against the
+ * current brain. This replaces the `?`-suffix heuristic the webhook used to decide answer-vs-file:
+ * natural questions ("what's the plan today") rarely carry a question mark, and every one that missed
+ * was silently filed as evidence and answered with "Logged.". The classifier owns that call now.
+ */
+export async function handleAnswer(
+  text: string,
+  chatId: string,
+  reply: Responder = telegramResponder(chatId),
+): Promise<void> {
+  const brain = await buildQuestionBrain(text);
+  await reply(await answerQuestion(text, brain));
+}
+
+/**
+ * File a text check-in as evidence, exactly as the Telegram evidence path does: distil → write to the
+ * Evidence DB (that is what feeds the scorecard, the daily brief and the weekly review) → auto-close a
+ * matching assignment → queue any new vocab for Anki. A typed check-in ("tutor taught me 跳舞 today")
+ * used to become a Pleco .txt and nothing else, so the word never entered the SRS deck retention is
+ * measured on. The .txt is gone from this automatic path — the learner asked for words to go straight
+ * to Anki, not to arrive as a file to import; `/pleco` still produces one on request. Fail-open on the
+ * enqueue — the evidence row must survive a queue error — and the caller is told how many were queued
+ * so it can say so honestly instead of assuming.
+ */
+export async function fileTextEvidence(
+  text: string,
+  chatId: string,
+  source = "telegram",
+): Promise<{ distilled: Distilled; closed?: Assignment; cardLine?: string }> {
+  const distilled = await distillEvidence({ text });
+  await addEvidence({
+    type: distilled.type,
+    rawText: text,
+    source,
+    distilled: JSON.stringify(distilled),
+  });
+  const closed = await autoCloseAssignmentFromEvidence(distilled);
+  let cardLine: string | undefined;
+  if (distilled.newVocab.length) {
+    const day = new Date().toISOString().slice(0, 10);
+    try {
+      const queued = await enqueueCards(distilled.newVocab, `check-in ${day}`);
+      cardLine = queued > 0 ? cardsQueuedMessage(queued, await getAgentStatus()) : NOTHING_NEW_LINE;
+    } catch (err) {
+      console.error("evidence filed but cards could not be queued", err);
+      cardLine = `⚠️ Couldn't queue the new words for Anki — I'll need a retry.`;
+    }
+  }
+  return { distilled, closed, cardLine };
+}
+
+/**
+ * The WHOLE handling of a plain-text message the command router declined (intent "log"): file it,
+ * queue its vocab, close what it satisfies, and return the one line to reply with.
+ *
+ * It lives here, next to routeCommand, because "routeCommand returned false" used to mean "the
+ * caller files it" — and only the Telegram webhook ever did. The dashboard chat called the same
+ * router and then fell through to a Q&A answer, so every check-in typed there was silently lost.
+ * Any surface that routes text must call routeCommand and then THIS; there is no third copy to keep
+ * in sync, and no way for a new surface to get the router without the filing.
+ */
+export async function logTextMessage(text: string, chatId: string, source = "telegram"): Promise<string> {
+  const { distilled, closed, cardLine } = await fileTextEvidence(text, chatId, source);
+  return acknowledgeEvidence(distilled, closed, cardLine);
+}
+
+/**
+ * The Pleco export, now EXPLICIT-ONLY (`/pleco [what]`).
+ *
+ * Automatic paths no longer send a .txt — a file to import is a chore, and the learner asked for
+ * words to land in Anki by themselves. But nothing is destroyed: lib/deck.ts and lib/pleco.ts are
+ * untouched and this command still produces the same import file on demand, for reading on the phone.
+ */
+export async function handlePlecoExport(
+  request: string,
+  chatId: string,
+  reply: Responder = telegramResponder(chatId),
+): Promise<void> {
+  const [syllabus, lessons, known] = await Promise.all([
+    readSyllabus().catch(() => []),
+    getRecentLessons(5).catch(() => []),
+    getKnownWords().catch(() => [] as string[]),
+  ]);
+  const res = await buildCardsForRequest(request, {
+    syllabus: syllabus.map((s) => `${s.chapter}: ${s.vocab}`).join("\n"),
+    lessons: lessons.map((l) => `${l.date}: ${l.summary}`).join("\n"),
+    known,
+  });
+  const sent = res.cards.length
+    ? await makeDeckFromVocab(res.label, res.cards, chatId, "pleco-request")
+    : { sent: false, count: 0 };
+  if (!sent.sent) {
+    await reply(`Nothing new to export for that — you've already got those. 加油 (jiāyóu)!`);
+    return;
+  }
+  await reply(`📄 ${sent.count} word${sent.count === 1 ? "" : "s"} as a Pleco file — tap to import.`);
+}
+
+/**
+ * The hybrid: a message that BOTH reports work and asks about it ("did 30 min of tone drills, is that
+ * enough?"). It used to classify as "answer", and answering is a terminal branch — routeCommand
+ * returned true, which short-circuits the webhook's evidence path — so the reported work was answered
+ * and then dropped: no evidence row, no scorecard input, no assignment auto-close, no cards.
+ *
+ * The filing lives HERE rather than in the webhook (i.e. rather than answering and returning false)
+ * for two reasons. First, the web-chat adapter also calls routeCommand and has NO evidence path at
+ * all (lib/webchat.ts falls back to answerQuestion), so a route-side fix would still lose the message
+ * on that surface. Second, one submission must produce ONE reply; returning false would have the
+ * webhook send its own "📝 Got it" ack on top of the answer.
+ *
+ * Answering happens first and filing is fail-open: if Notion is down the learner still gets their
+ * answer, with no false claim that the work was recorded.
+ */
+export async function handleAnswerAndLog(
+  text: string,
+  chatId: string,
+  reply: Responder = telegramResponder(chatId),
+): Promise<void> {
+  const brain = await buildQuestionBrain(text);
+  const answer = await answerQuestion(text, brain);
+  const lines = [answer];
+  try {
+    const { distilled, closed, cardLine } = await fileTextEvidence(text, chatId);
+    lines.push(`📝 Filed: ${distilled.summary.trim() || distilled.type}`);
+    if (closed) lines.push(`✅ Marked done: ${closed.description}`);
+    if (cardLine) lines.push(cardLine);
+  } catch (err) {
+    console.error("answer_log: answered but could not file evidence", err);
+  }
+  await reply(lines.join("\n\n"));
 }
 
 export async function routeCommand(
@@ -301,8 +513,13 @@ export async function routeCommand(
     if (/^feedback$/i.test(cmd)) { await handleFeedback(chatId, reply); return true; }
     if (/^status$/i.test(cmd)) { await handleStatus(chatId, reply); return true; }
     if (/^done$/i.test(cmd)) { await handleDone(arg, chatId); return true; }
+    // Explicit only — never inferred from free text. "is my agent working" must not silently
+    // re-queue anything, so the retry path is reachable only by typing it.
+    if (/^agent$/i.test(cmd)) { await handleAgent(arg, chatId, reply); return true; }
     if (/^listen$/i.test(cmd)) { await handleListen(chatId); return true; }
     if (/^(lesson|note)$/i.test(cmd)) { await handleLesson(arg, chatId, reply); return true; }
+    // Explicit-only Pleco export. Automatic paths send cards to Anki and never a file.
+    if (/^pleco$/i.test(cmd)) { await handlePlecoExport(arg || "recent vocab", chatId, reply); return true; }
     return false;
   }
   const { intent, request } = await classifyCommand(t);
@@ -310,5 +527,7 @@ export async function routeCommand(
   if (intent === "feedback") { await handleFeedback(chatId, reply); return true; }
   if (intent === "status") { await handleStatus(chatId, reply); return true; }
   if (intent === "listen") { await handleListen(chatId); return true; }
-  return false;
+  if (intent === "answer") { await handleAnswer(t, chatId, reply); return true; }
+  if (intent === "answer_log") { await handleAnswerAndLog(t, chatId, reply); return true; }
+  return false; // "log" → the caller's evidence path distills and files it
 }

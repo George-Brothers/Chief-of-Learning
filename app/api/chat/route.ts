@@ -1,4 +1,5 @@
 import { isAuthed } from "@/lib/auth";
+import { csrfGuard } from "@/lib/csrf";
 import { respondToMessage } from "@/lib/webchat";
 
 export const runtime = "nodejs";
@@ -8,9 +9,15 @@ export const maxDuration = 60;
  * Talk-to-Lucy web chat. Gated behind the single-user session cookie, then runs the SAME brain the
  * Telegram webhook uses (see lib/webchat). Never expose this unauthenticated — it reads and writes
  * the owner's Notion and spends model tokens.
+ *
+ * The cookie gate answers "is this the owner's browser"; the csrfGuard answers "did the owner's own
+ * page send this". Both are needed: a cross-origin `fetch` with a simple content-type is a request
+ * the browser sends without a preflight, and this route is the most expensive write in the app.
  */
 export async function POST(req: Request): Promise<Response> {
   if (!isAuthed(req)) return new Response("unauthorized", { status: 401 });
+  const forged = csrfGuard(req);
+  if (forged) return forged;
 
   let body: unknown;
   try {

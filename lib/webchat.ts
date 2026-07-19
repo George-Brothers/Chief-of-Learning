@@ -7,21 +7,25 @@
 // happen exactly as they do for Telegram (commands still enqueue actions, append ledger notes, etc.).
 
 import { getEnv } from "./env";
-import { routeCommand, type Responder } from "./command";
-import { answerQuestion } from "./ai";
-import { buildQuestionBrain } from "./brain";
+import { routeCommand, logTextMessage, type Responder } from "./command";
 
 /** Hard cap on inbound message size — untrusted single-user input, treated as data by the model. */
 const MAX_MESSAGE_CHARS = 4000;
 
-export type ChatReply = { reply: string; handledAs: "command" | "answer" };
+export type ChatReply = { reply: string; handledAs: "command" | "answer" | "log" };
 
 /**
  * Run one web-chat turn through Lucy's real pipeline.
- * 1. Try the command router (same as Telegram). If it handles the message, return its collected reply.
- * 2. Otherwise treat it as a message to Lucy and answer it against the current brain — the same
- *    question path the Telegram handler uses. A chat panel is conversational, so non-commands go to
- *    Lucy's voice rather than being filed as silent evidence.
+ * 1. Try the command router (same as Telegram). If it handles the message, return its collected
+ *    reply. Every conversational message goes down this path too — the classifier's "answer" and
+ *    "answer_log" intents are handled inside routeCommand.
+ * 2. Otherwise the router declined, which means intent "log": a report of study. File it, exactly as
+ *    the Telegram webhook does, via the shared logTextMessage.
+ *
+ * Step 2 used to be a fall-through to buildQuestionBrain/answerQuestion, i.e. Lucy replied to the
+ * check-in and NOTHING was recorded: no evidence row, no scorecard input, no assignment closed, no
+ * Anki cards. Study reported through the dashboard was lost outright. Answering is not this branch's
+ * job — the router already owns every intent that wants an answer.
  */
 export async function respondToMessage(rawMessage: string): Promise<ChatReply> {
   const env = getEnv();
@@ -42,7 +46,15 @@ export async function respondToMessage(rawMessage: string): Promise<ChatReply> {
     return { reply: reply || "Done. 加油 (jiāyóu)!", handledAs: "command" };
   }
 
-  const brain = await buildQuestionBrain(message);
-  const answer = await answerQuestion(message, brain);
-  return { reply: answer, handledAs: "answer" };
+  // Fail-open, like the Telegram path: if Notion is down the learner still gets a reply, and it never
+  // claims the check-in was recorded when it wasn't.
+  try {
+    return { reply: await logTextMessage(message, chatId, "web"), handledAs: "log" };
+  } catch (err) {
+    console.error("web chat: could not file the check-in", err);
+    return {
+      reply: "I couldn't save that just now — my notes are offline. Send it again in a minute and it'll stick.",
+      handledAs: "log",
+    };
+  }
 }

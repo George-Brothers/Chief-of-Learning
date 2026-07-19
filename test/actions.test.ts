@@ -4,14 +4,16 @@ import { FULL_ENV } from "./helpers";
 const enqueueAction = vi.fn();
 const appendLedgerNotes = vi.fn();
 const addAssignment = vi.fn();
+const getCardedWords = vi.fn(async () => [] as string[]);
 const sendMessage = vi.fn();
-vi.mock("../lib/notion", () => ({ enqueueAction, appendLedgerNotes, addAssignment }));
+vi.mock("../lib/notion", () => ({ enqueueAction, appendLedgerNotes, addAssignment, getCardedWords }));
 vi.mock("../lib/telegram", () => ({ sendMessage }));
 
 describe("dispatchActions", () => {
   beforeEach(() => {
     Object.assign(process.env, FULL_ENV);
-    for (const f of [enqueueAction, appendLedgerNotes, addAssignment, sendMessage]) f.mockReset();
+    for (const f of [enqueueAction, appendLedgerNotes, addAssignment, sendMessage, getCardedWords]) f.mockReset();
+    getCardedWords.mockResolvedValue([]);
   });
 
   it("queues cards, messages reading, and ledgers a drill", async () => {

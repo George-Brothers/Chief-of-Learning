@@ -15,6 +15,10 @@ const VocabSchema = z.object({
   pinyin: z.string(),
   definition: z.string(),
   traditional: z.string().optional(),
+  // An Anki card back is `pinyin — definition` plus this. Without the field the photo/daily paths
+  // could only ever produce cards whose back read "…\n\nundefined"; optional because plenty of words
+  // (a bare noun off a tutor slide) have no natural example, and an invented one teaches nothing.
+  example: z.string().optional(),
 });
 
 export const DistilledSchema = z.object({
@@ -175,6 +179,8 @@ export type DailyContext = {
   dayNote: string; // e.g. "Today is a lesson day (class tonight)."
   evidence: Distilled[];
   openAssignments?: string; // open Assignments rows, one "- [kind] description" per line
+  budgetMinutes: number; // today's real self-study budget (lib/rhythm.ts studyPlanShape)
+  listeningOptions?: string; // named, real listening sources picked by code — one per line
 };
 
 export async function runDailyCoach(ctx: DailyContext): Promise<DailyResult> {
@@ -185,6 +191,10 @@ export async function runDailyCoach(ctx: DailyContext): Promise<DailyResult> {
 
 THIS WEEK'S FOCUS (from the head teacher): ${ctx.weekFocus || "(not set yet)"}
 ${ctx.dayNote}
+TODAY'S TIME BUDGET: ${ctx.budgetMinutes} minutes of self-study.
+
+=== TODAY'S LISTENING OPTIONS (real, pick from these only) ===
+${ctx.listeningOptions || "(none available today — do not invent listening material)"}
 
 === DAILY LOG (newest first) ===
 ${ctx.dailyLog || "(empty — first day)"}

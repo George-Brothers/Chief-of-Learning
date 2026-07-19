@@ -1,0 +1,36 @@
+/* The only global stylesheet in the app — everything else is a CSS module scoped to a component.
+   Keep it this small; there is no framework here and none is wanted.
+
+   It exists because the instrument panel paints its background on `.root`, a DIV. The canvas behind
+   the document (what you see past the last element, and what the scrollbar and overscroll are drawn
+   against) is painted from the ROOT element, so a dark page without this sat in an 8px white UA
+   margin with a white gutter. `color-scheme` has the same problem: set on `.root` it never reaches
+   the scrollbar or form widget rendering, which is why it is declared here too.
+
+   The two colours are the dashboard's --plane in each theme, duplicated on purpose: a CSS module
+   cannot export a custom property to :root, and the canvas must be painted before any module CSS
+   is parsed. If --plane changes in dashboard.module.css, change it here as well. */
+
+:root {
+  color-scheme: dark;
+  background-color: #0b0d0c;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    background-color: #eeede7;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: inherit;
+}

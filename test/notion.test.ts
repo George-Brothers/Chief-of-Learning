@@ -112,11 +112,16 @@ describe("notion store", () => {
   });
   it("getOpenAssignments filters open + maps rows", async () => {
     databases.query.mockResolvedValueOnce({ results: [
-      { id: "AS1", properties: { Type: { select: { name: "drill" } }, Description: { rich_text: [{ plain_text: "rewrite 5" }] } } },
+      { id: "AS1", created_time: "2026-07-12T09:00:00.000Z", properties: { Type: { select: { name: "drill" } }, Description: { rich_text: [{ plain_text: "rewrite 5" }] } } },
     ] } as any);
     const { getOpenAssignments } = await import("../lib/notion");
     const rows = await getOpenAssignments();
-    expect(rows[0]).toEqual({ id: "AS1", kind: "drill", description: "rewrite 5" });
+    expect(rows[0]).toEqual({
+      id: "AS1",
+      kind: "drill",
+      description: "rewrite 5",
+      createdTime: "2026-07-12T09:00:00.000Z",
+    });
     const q = databases.query.mock.calls.at(-1)![0] as any;
     expect(q.filter.property).toBe("Status");
   });
@@ -142,5 +147,78 @@ describe("notion store", () => {
       { type: "paragraph", paragraph: { rich_text: [{ plain_text: "2026-07-15 ✗ 唱歌" }] } },
     ] } as any);
     expect(await getListeningStats()).toEqual({ correct: 1, total: 2 });
+  });
+
+  it("listening source offers are logged, read back, and never counted as check results", async () => {
+    const { recordListeningOffer, getRecentListeningSourceIds, getListeningStats } = await import("../lib/notion");
+    const body = (lines: string[]) => ({
+      results: lines.map((l) => ({ type: "paragraph", paragraph: { rich_text: [{ plain_text: l }] } })),
+    });
+
+    const before = body([
+      'PENDING: {"expected":"跳舞","sentence":"我喜欢＿＿。","ts":"2026-07-15T00:00:00Z"}',
+      "--- RESULTS ---",
+      "2026-07-18 ✓ 跳舞",
+      "2026-07-17 🎧 mandarin-corner",
+    ]);
+    // ONE read now (it used to read raw, then read again for the results block — a non-atomic
+    // read-modify-write). The history must still survive the merge.
+    blocks.children.list.mockResolvedValueOnce(before as any);
+    blocks.children.append.mockClear();
+    await recordListeningOffer(["lazy-chinese", "du-chinese"], "2026-07-19");
+    const wrote = blocks.children.append.mock.calls.flatMap((c) => (c[0] as any).children).map((c: any) => c.paragraph.rich_text.map((t: any) => t.text.content).join("")).join("\n");
+    expect(wrote).toContain("2026-07-19 🎧 lazy-chinese,du-chinese");
+    // An offer must not consume an outstanding cloze check…
+    expect(wrote).toContain('PENDING: {"expected":"跳舞"');
+    // …nor drop the prior results/offers it was merged into.
+    expect(wrote).toContain("2026-07-18 ✓ 跳舞");
+    expect(wrote).toContain("2026-07-17 🎧 mandarin-corner");
+    // Newest offer leads, so getRecentListeningSourceIds' slice(0, days) reads the right ones.
+    expect(wrote.indexOf("2026-07-19 🎧")).toBeLessThan(wrote.indexOf("2026-07-18 ✓"));
+
+    const logged = body([
+      "PENDING:",
+      "--- RESULTS ---",
+      "2026-07-19 🎧 lazy-chinese,du-chinese",
+      "2026-07-18 ✓ 跳舞",
+    ]);
+    blocks.children.list.mockResolvedValueOnce(logged as any);
+    expect(await getRecentListeningSourceIds()).toEqual(["lazy-chinese", "du-chinese"]);
+    blocks.children.list.mockResolvedValueOnce(logged as any);
+    expect(await getListeningStats()).toEqual({ correct: 1, total: 1 });
+  });
+
+  /**
+   * recordListeningOffer runs from the DAILY cron and rewrites the page by re-appending every prior
+   * line, with no cap — unlike prependDoc, which keeps its docs under 12000/20000 chars. Unattended,
+   * that grows the listening page forever. It also read the page TWICE per call, so a concurrent
+   * write could land between the two reads and be half-preserved.
+   */
+  it("caps the listening page and reads it exactly once per offer", async () => {
+    const { recordListeningOffer } = await import("../lib/notion");
+    const history = Array.from({ length: 800 }, (_, i) => `2026-01-01 🎧 source-${i}-${"x".repeat(40)}`);
+    const before = {
+      results: ["PENDING:", "--- RESULTS ---", ...history].map((l) => ({
+        type: "paragraph", paragraph: { rich_text: [{ plain_text: l }] },
+      })),
+    };
+    blocks.children.list.mockResolvedValue(before as any); // allow any number of reads, then count them
+    blocks.children.list.mockClear();
+    blocks.children.append.mockClear();
+
+    await recordListeningOffer(["lazy-chinese"], "2026-07-19");
+
+    // Exactly two block listings: ONE read of the page, plus writeDoc's own listing of the blocks it
+    // must retire. It used to be three — raw, then a second read for the results block.
+    expect(blocks.children.list).toHaveBeenCalledTimes(2);
+    const lines = blocks.children.append.mock.calls
+      .flatMap((c) => (c[0] as any).children)
+      .map((c: any) => c.paragraph.rich_text.map((t: any) => t.text.content).join(""))
+      .filter((l: string) => !/^[​⁠]+$/.test(l)); // drop the commit sentinel block
+    const wrote = lines.join("\n");
+    expect(wrote.length).toBeLessThanOrEqual(12000);
+    expect(wrote).toContain("2026-07-19 🎧 lazy-chinese"); // today's offer survives the cap
+    // The cap must not leave a half-line, which getRecentListeningSourceIds would parse as a source.
+    expect(lines.at(-1)).toMatch(/^2026-01-01 🎧 source-\d+-x{40}$/);
   });
 });

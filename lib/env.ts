@@ -65,3 +65,31 @@ export type Env = z.infer<typeof Schema>;
 export function getEnv(): Env {
   return Schema.parse(process.env);
 }
+
+/**
+ * Env for a MAINTENANCE SCRIPT that uses a small slice of the app.
+ *
+ * getEnv() validates the WHOLE schema, and lib/notion calls it on every read and write — so a script
+ * that only rewrites two Notion pages could not run without DEEPSEEK_API_KEY, NOTION_SCORECARD_PAGE_ID
+ * and every other production var being present. `npm run migrate:brain` was unrunnable for exactly
+ * that reason: it died on unrelated missing vars before touching Notion.
+ *
+ * So: validate the keys the script ACTUALLY uses strictly (missing ones still fail immediately, with
+ * their names), then fill any other required key with an inert placeholder purely to satisfy the
+ * shared schema when getEnv() is called deep inside lib/notion. Nothing reads those placeholders — a
+ * script that used one would be talking to a provider it just declared it doesn't need. Call this
+ * BEFORE the first getEnv() (i.e. before any Notion IO).
+ */
+const SCRIPT_PLACEHOLDER = "unset-not-used-by-this-script";
+
+export function requireEnvForScript<K extends keyof Env>(keys: readonly K[]): Pick<Env, K> {
+  const mask = Object.fromEntries(keys.map((k) => [k, true as const]));
+  const picked = Schema.pick(mask as never).parse(process.env) as Pick<Env, K>;
+  for (const [name, field] of Object.entries(Schema.shape)) {
+    if ((keys as readonly string[]).includes(name)) continue;
+    if (process.env[name] !== undefined) continue;
+    // Required means "rejects undefined" — optional/defaulted fields are left alone.
+    if (!field.safeParse(undefined).success) process.env[name] = SCRIPT_PLACEHOLDER;
+  }
+  return picked;
+}

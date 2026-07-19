@@ -20,7 +20,7 @@ describe("addCards", () => {
       { headword: "跳舞", pinyin: "tiàowǔ", definition: "dance", example: "我喜欢跳舞。" },
       { headword: "唱歌", pinyin: "chànggē", definition: "sing", example: "我喜欢唱歌。" },
     ]);
-    expect(res).toEqual({ added: 1, skipped: 1 });
+    expect(res).toEqual({ added: 1, skipped: 1, failed: [] });
     const addNote = calls.find((c) => c.action === "addNote");
     expect(addNote.params.note.fields.Front).toBe("唱歌");
     expect(addNote.params.note.fields.Back).toContain("chànggē");

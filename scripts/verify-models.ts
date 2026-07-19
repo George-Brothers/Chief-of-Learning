@@ -23,17 +23,11 @@ import { modelsFor, slugFor, type Role } from "../lib/models";
 import { DistilledSchema, DailySchema, WeeklySchema } from "../lib/ai";
 import { LessonNoteSchema, LessonFeedbackSchema } from "../lib/lesson";
 import { COACH_SYSTEM } from "../lib/prompts";
-
-// The two command-layer schemas, inlined so this script stays free of command.ts's module-load imports.
-const IntentSchema = z.object({
-  intent: z.enum(["make_cards", "feedback", "status", "listen", "other"]),
-  request: z.string(),
-});
-const CardsResultSchema = z.object({
-  source: z.string(),
-  label: z.string(),
-  cards: z.array(z.object({ headword: z.string(), pinyin: z.string(), definition: z.string(), example: z.string() })),
-});
+// Imported, not re-declared: these used to be inlined here "to stay free of command.ts's module-load
+// imports", and the copy silently rotted (it still listed a long-dead "other" intent, so the script
+// was verifying a schema the app no longer uses). command.ts reads env lazily via getEnv(), so
+// importing it costs nothing at module load and the check now runs against the real schemas.
+import { IntentSchema, CardsResultSchema } from "../lib/command";
 
 if (!process.env.DEEPSEEK_API_KEY) {
   throw new Error("Set DEEPSEEK_API_KEY (and optionally GOOGLE_GENERATIVE_AI_API_KEY) to verify live.");

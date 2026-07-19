@@ -1,6 +1,7 @@
 import { getEnv } from "@/lib/env";
 import { distillLesson } from "@/lib/lesson";
-import { lessonExists, addLesson, enqueueAction } from "@/lib/notion";
+import { lessonExists, addLesson } from "@/lib/notion";
+import { enqueueCards } from "@/lib/actions";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -30,19 +31,11 @@ export async function POST(req: Request): Promise<Response> {
     transcript: markdown,
   });
 
-  if (note.vocabIntroduced.length > 0) {
-    // notify:true is what makes the done route report back (it gates on payload.notify). Without it
-    // this path — the primary lesson pipeline — failed silently: cards could vanish with no signal
-    // to anyone, while the README promised a ⚠️ on failure. Nobody is watching this enqueue happen,
-    // so it needs the report-back *more* than the /cards command does, not less.
-    await enqueueAction({
-      type: "create_anki_cards",
-      payload: JSON.stringify({
-        cards: note.vocabIntroduced,
-        notify: true,
-        label: `lesson ${date}`,
-      }),
-    });
-  }
+  // enqueueCards is the shared producer: it de-dupes against what is already carded, normalises a
+  // missing example, and sets notify:true — which is what makes the done route report back (it gates
+  // on payload.notify). Without that report-back this path — the primary lesson pipeline — failed
+  // silently: cards could vanish with no signal to anyone. Nobody is watching this enqueue happen, so
+  // it needs the report-back *more* than the /cards command does, not less.
+  await enqueueCards(note.vocabIntroduced, `lesson ${date}`);
   return Response.json({ ok: true, lessonId });
 }

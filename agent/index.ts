@@ -3,6 +3,7 @@ import { loadConfig } from "./config";
 import { isTranscript } from "./convert";
 import { ingestTranscript, scanWatchDir, sweepParked } from "./ingest";
 import { drainTasks } from "./executor";
+import { makeHeartbeat } from "./heartbeat";
 import { syncRetention } from "./retention";
 
 const cfg = loadConfig();
@@ -48,6 +49,13 @@ void sweep();
 /** Tasks already logged as deferred, so a closed Anki doesn't reprint the same line every poll. */
 const deferred = new Set<string>();
 
+/**
+ * Liveness. This runs after the queue drain, on every cycle that got that far, so the cloud can tell
+ * "this agent is down" from "there was nothing to do" — the distinction the daily brief and the
+ * dashboard both alarm on.
+ */
+const beat = makeHeartbeat(cfg);
+
 async function drain(): Promise<void> {
   try {
     for (const r of await drainTasks(cfg)) {
@@ -65,6 +73,12 @@ async function drain(): Promise<void> {
     }
   } catch (e) {
     console.error("poll error:", (e as Error).message);
+    return; // a cycle that couldn't reach the cloud is not a cycle that proves this agent is healthy
+  }
+  try {
+    await beat();
+  } catch (e) {
+    console.error("heartbeat failed:", (e as Error).message);
   }
 }
 

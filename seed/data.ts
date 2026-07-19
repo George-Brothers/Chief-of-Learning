@@ -59,8 +59,9 @@ If the Scorecard shows bands 1–2 near-complete but band 3 flat, that's SOURCE 
 weekly review should flag it: they need new material, not more IC Vol. 1.
 
 ## Standing weak spot: LISTENING (biggest gap)
-The notes have almost no listening. Only WB Listening Comprehension + Fluency Link cover it.
-If a week passes with zero listening, that becomes the day's one action.
+The notes have almost no listening. Lucy hands out real, named listening sources each morning
+(picked by code from lib/listening-sources.ts) — listen, then reply with which one you picked and
+one thing you caught. If a week passes with zero listening, that becomes the day's one action.
 
 ## Per-lesson loop (reuse every lesson)
 TB (learn) → Pleco (vocab) → CharWB (write) → WB (all 4 skills incl. listening) → tutor (speak)
@@ -68,12 +69,12 @@ TB (learn) → Pleco (vocab) → CharWB (write) → WB (all 4 skills incl. liste
 
 ## Route from here
 1. Lock down L3 (Time & Date): TB L3 → WB L3 → CharWB 3-1 & 3-2.
-2. Clear the L3 vocab backlog into Pleco.
+2. Do the L3 vocab reviews already waiting in the deck (cards are made automatically — never by hand).
 3. Drill the 4 recurring grammar points once, well: A-not-A, 是不是, 还+repeat verb, 有(一)点儿.
 4. Speak it: dinner-invitation role-play out loud, then with the tutor.
 5. Fix flagged tones.
 6. Move into L4 (Hobbies): verb-object compounds → WB L4 → CharWB 4-1 & 4-2.
-7. Close the listening gap: one WB Listening section per lesson, don't let it lag.
+7. Close the listening gap: listen to one of the sources Lucy offers each day, and report back.
 8. Then L5 (Visiting Friends) onward, same loop.`;
 
 export const DAILY_LOG = `# Daily Log — the heartbeat
@@ -93,14 +94,14 @@ then write the next ONE action, calibrated to known + 1–2 new. Never pile new 
 - Note: first tutor session logged. Speaking bit fixes a common slip, saying
   你是喜欢跳舞; drop the 是 (你喜欢跳舞).`;
 
-export const GRADEBOOK = `WEEK FOCUS: Fix 是-before-verb in speech, and do 1 WB listening section (close the listening gap).
+export const GRADEBOOK = `WEEK FOCUS: Fix 是-before-verb in speech, and listen to one of the offered sources daily (close the listening gap).
 
 # Gradebook — teacher's tracking sheet
 The learner reads the verdict; they don't edit it. The Sunday run refreshes it.
 
 ## Headline verdict (judged by pace + time)
 - Lesson pace: ~1 lesson / 2 weeks (adaptive). On L3–L4. 🟢 on schedule.
-- Study time: ≥1.5 hr weekdays. This week: slow start (weekend task carried). 🟡
+- Study time: per-day budget — 60 min on tutor days (Mon/Wed/Sat), 90 min Tue/Thu, 120 min Fri/Sun. This week: slow start (weekend task carried). 🟡
 
 Lesson windows (flex): L3 (Time & Date) solid in ~2 weeks · L4 (Hobbies) solid in ~4 weeks.
 
@@ -108,7 +109,7 @@ Lesson windows (flex): L3 (Time & Date) solid in ~2 weeks · L4 (Hobbies) solid 
 - Characters & writing 🟡 — first task (忙没字) still open, carried; no photo yet.
 - Workbook (all 4 skills) ⚪ — not started.
 - Listening 🔴 — known standing gap; protect it. If a week passes with zero listening it becomes the day's one action.
-- Vocab / tutor words 🟡 — backlog to clear into Pleco.
+- Vocab / tutor words 🟡 — cards are auto-created from lessons; the gap is doing the reviews.
 - Speaking & tones 🟡 — new fix: drop 是 before a verb; also 我请你吃饭 tones.
 - Grammar 🟢 — strong on A-not-A; 是不是 nuance still fuzzy.
 

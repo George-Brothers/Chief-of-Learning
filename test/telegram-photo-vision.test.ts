@@ -61,7 +61,7 @@ describe("telegram photo vision path (real ai + models)", () => {
     expect(model.modelId).toBe("gpt-4o-mini");
     // Evidence is logged and the user gets the normal ack — no honest-degrade path here.
     expect(addEvidence).toHaveBeenCalledOnce();
-    expect(sendMessage).toHaveBeenCalledWith("42", "Logged.");
+    expect(sendMessage.mock.calls[0][1]).toContain("reviewed 20 cards"); // the ack reflects what was read
   });
 
   it("degrades honestly when NO vision provider is configured — records the attempt, no throw/500", async () => {

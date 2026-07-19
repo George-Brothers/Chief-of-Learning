@@ -5,9 +5,10 @@ const distillLesson = vi.fn();
 const lessonExists = vi.fn();
 const addLesson = vi.fn();
 const enqueueAction = vi.fn();
+const getCardedWords = vi.fn(async () => [] as string[]);
 
 vi.mock("@/lib/lesson", () => ({ distillLesson }));
-vi.mock("@/lib/notion", () => ({ lessonExists, addLesson, enqueueAction }));
+vi.mock("@/lib/notion", () => ({ lessonExists, addLesson, enqueueAction, getCardedWords }));
 
 const post = (body: unknown, auth = "Bearer agent-secret") =>
   new Request("http://x/api/ingest/transcript", {
@@ -20,7 +21,8 @@ describe("POST /api/ingest/transcript", () => {
   beforeEach(() => {
     Object.assign(process.env, FULL_ENV);
     vi.resetModules();
-    for (const f of [distillLesson, lessonExists, addLesson, enqueueAction]) f.mockReset();
+    for (const f of [distillLesson, lessonExists, addLesson, enqueueAction, getCardedWords]) f.mockReset();
+    getCardedWords.mockResolvedValue([]);
   });
 
   it("rejects a bad bearer", async () => {
