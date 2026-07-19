@@ -1,0 +1,42 @@
+{
+  "name": "lucy-chinese-coach",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "setup:notion": "tsx --env-file=.env.local scripts/setup-notion.ts",
+    "seed:knowledge": "tsx --env-file=.env.local scripts/seed-knowledge.ts",
+    "ingest:materials": "tsx --env-file=.env.local scripts/ingest-materials.ts",
+    "verify:models": "tsx scripts/verify-models.ts",
+    "db:migrate": "tsx --env-file=.env.local scripts/db-migrate.ts",
+    "sync:index": "tsx --env-file=.env.local scripts/index-sync.ts",
+    "build:hsk": "tsx scripts/build-hsk-data.ts",
+    "agent": "tsx --env-file=.env.agent agent/index.ts",
+    "recorder": "tsx --env-file=.env.agent agent/recorder/index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/deepseek": "^1.0.48",
+    "@ai-sdk/google": "^2.0.82",
+    "@ai-sdk/openai": "^2.0.114",
+    "@neondatabase/serverless": "^1.1.0",
+    "@notionhq/client": "^2.2.15",
+    "ai": "^5.0.0",
+    "chokidar": "^4.0.3",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "pdf-parse": "^1.1.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

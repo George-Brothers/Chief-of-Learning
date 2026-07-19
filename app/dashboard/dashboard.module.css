@@ -1,0 +1,450 @@
+/* Lucy dashboard design system — one restrained palette, light + dark, jade primary with a cinnabar
+   seal accent used sparingly (brand mark, streak flame, level badge). Progress fills are a single
+   magnitude hue; status verdicts use the reserved status palette. Tokens live on .root so both modes
+   swap in one place. */
+
+.root {
+  color-scheme: light;
+  --plane: #f7f7f4;
+  --surface: #ffffff;
+  --surface-2: #fbfbf9;
+  --ink: #14130f;
+  --ink-2: #52514c;
+  --muted: #8a887f;
+  --hair: #e6e5dd;
+  --ring: rgba(20, 19, 15, 0.08);
+
+  --accent: #0f9d6b; /* jade — primary progress + interactive */
+  --accent-strong: #0b7d55;
+  --accent-weak: #d7f0e5;
+  --seal: #c2402f; /* cinnabar — decorative accent only */
+  --seal-weak: #f6e3df;
+
+  --good: #0ca30c;
+  --warn: #d98a00;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+
+  --shadow: 0 1px 2px rgba(20, 19, 15, 0.04), 0 6px 20px rgba(20, 19, 15, 0.05);
+  --radius: 16px;
+
+  background: var(--plane);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  min-height: 100vh;
+}
+
+@media (prefers-color-scheme: dark) {
+  .root {
+    color-scheme: dark;
+    --plane: #0d0d0c;
+    --surface: #1a1a18;
+    --surface-2: #201f1d;
+    --ink: #f6f5ef;
+    --ink-2: #c3c2b7;
+    --muted: #8a887f;
+    --hair: #2c2c29;
+    --ring: rgba(255, 255, 255, 0.09);
+
+    --accent: #2bbd86;
+    --accent-strong: #37d197;
+    --accent-weak: #123a2c;
+    --seal: #e5705e;
+    --seal-weak: #3a201c;
+
+    --good: #35c635;
+    --warn: #fab219;
+    --serious: #f0956f;
+    --critical: #ec5a5a;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+
+.shell {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 28px 20px 64px;
+}
+
+/* ---- Header ---- */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.seal {
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(150deg, var(--seal), #a5321f);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+  flex: none;
+}
+.brandName {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.brandSub {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 2px 0 0;
+}
+.headerMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.stamp {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+
+/* ---- Grid + cards ---- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 18px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+.span12 { grid-column: span 12; }
+.span8 { grid-column: span 8; }
+.span6 { grid-column: span 6; }
+.span5 { grid-column: span 5; }
+.span4 { grid-column: span 4; }
+.span7 { grid-column: span 7; }
+
+@media (max-width: 860px) {
+  .span8, .span6, .span5, .span4, .span7 { grid-column: span 12; }
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.cardTitle {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0;
+}
+.cardNote {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---- Stat tiles ---- */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+.tile {
+  background: var(--surface-2);
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.tileValue {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.tileUnit { font-size: 14px; color: var(--ink-2); font-weight: 600; }
+.tileLabel {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-top: 6px;
+}
+.flame { color: var(--seal); }
+
+/* ---- Progress bars ---- */
+.bandRow {
+  display: grid;
+  grid-template-columns: 74px 1fr 92px;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+}
+.bandRow + .bandRow { border-top: 1px solid var(--hair); }
+.bandName { font-size: 13px; font-weight: 600; }
+.bandName small { display: block; color: var(--muted); font-weight: 500; font-size: 11px; }
+.track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent-weak);
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  min-width: 6px;
+  transition: width 0.4s ease;
+}
+.bandFig {
+  font-size: 12px;
+  color: var(--ink-2);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bandFig b { color: var(--ink); font-weight: 700; }
+
+/* level / xp bar (slightly taller, seal-tinted) */
+.xpTrack { height: 12px; background: var(--seal-weak); }
+.xpFill { background: linear-gradient(90deg, var(--seal), #e0916f); }
+
+/* ---- Verdict badge (status palette, icon + label — never color alone) ---- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ring);
+}
+.badgeGood { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
+.badgeOn { color: var(--accent-strong); background: var(--accent-weak); }
+.badgeBehind { color: var(--critical); background: color-mix(in srgb, var(--critical) 12%, transparent); }
+.badgeUnknown { color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent); }
+
+/* ---- Focus areas ---- */
+.focusItem {
+  padding: 12px 0;
+  display: flex;
+  gap: 12px;
+}
+.focusItem + .focusItem { border-top: 1px solid var(--hair); }
+.focusDot {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+.focusArea { font-size: 14px; font-weight: 600; margin: 0 0 3px; }
+.focusSuggestion { font-size: 13px; color: var(--ink-2); margin: 0; line-height: 1.45; }
+.hitTag { font-size: 11px; color: var(--muted); font-weight: 600; }
+
+/* ---- Activity + prose ---- */
+.activityRow {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  align-items: baseline;
+}
+.activityRow + .activityRow { border-top: 1px solid var(--hair); }
+.activityDate {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  width: 62px;
+}
+.activityType {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex: none;
+  width: 88px;
+}
+.activityText { font-size: 13px; color: var(--ink); line-height: 1.4; }
+
+.planGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+@media (max-width: 860px) {
+  .planGrid { grid-template-columns: 1fr; }
+}
+
+.prose {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+.prose strong { color: var(--ink); }
+.empty { font-size: 13px; color: var(--muted); font-style: italic; }
+
+/* ---- Chat ---- */
+.chatCard { display: flex; flex-direction: column; min-height: 440px; }
+.chatLog {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px 12px;
+  max-height: 520px;
+}
+.msg {
+  max-width: 82%;
+  padding: 10px 13px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.msgUser {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.msgLucy {
+  align-self: flex-start;
+  background: var(--surface-2);
+  border: 1px solid var(--hair);
+  color: var(--ink);
+  border-bottom-left-radius: 4px;
+}
+.msgMeta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.chatHint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+.composer {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--hair);
+  padding-top: 12px;
+}
+.input {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--hair);
+  background: var(--surface-2);
+  color: var(--ink);
+  outline: none;
+}
+.input:focus { border-color: var(--accent); }
+.send {
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 0 18px;
+  border-radius: 12px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.send:disabled { opacity: 0.5; cursor: default; }
+
+.ghostBtn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--hair);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.ghostBtn:hover { color: var(--ink); border-color: var(--ring); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+.chip {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--hair);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); color: var(--accent-strong); }
+
+/* ---- Banner ---- */
+.banner {
+  grid-column: span 12;
+  background: var(--seal-weak);
+  border: 1px solid color-mix(in srgb, var(--seal) 30%, transparent);
+  color: var(--ink);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+
+/* ---- Login ---- */
+.loginWrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.loginCard {
+  width: 100%;
+  max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 28px;
+  text-align: center;
+}
+.loginCard h1 { font-size: 20px; margin: 14px 0 4px; }
+.loginCard p { font-size: 13px; color: var(--ink-2); margin: 0 0 20px; }
+.loginForm { display: flex; flex-direction: column; gap: 10px; }
+.loginInput {
+  font: inherit;
+  font-size: 15px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--hair);
+  background: var(--surface-2);
+  color: var(--ink);
+  outline: none;
+}
+.loginInput:focus { border-color: var(--accent); }
+.loginError { color: var(--critical); font-size: 13px; min-height: 18px; }
