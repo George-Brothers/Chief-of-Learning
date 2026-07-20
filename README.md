@@ -1,6 +1,6 @@
 # Lucy: an adaptive Chinese study coach
 
-Lucy is a single-user AI coach for learning Mandarin. You talk to it in a Telegram thread: check-ins,
+Lucy is an AI coach for learning Mandarin. You talk to it in a Telegram thread: check-ins,
 questions, homework photos, produces flashcards, and more. It diagnoses each lesson, keeps your plan and
 knowledge base in Notion, turns new vocabulary into Pleco flashcard decks, and sends one short brief
 every morning.
@@ -13,6 +13,17 @@ This repository is a working template. It ships with example study data so the p
 every personal value lives in environment variables and Notion documents you provide. No database is
 required to run it; an optional Neon Postgres + pgvector index adds semantic retrieval (see
 [Semantic retrieval index](#semantic-retrieval-index-optional)).
+
+## It also comes with a dashboard (if you like that sort of thing)
+### To-do List
+<img width="582.5" height="445.5" alt="Screenshot 2026-07-19 235234" src="https://github.com/user-attachments/assets/e45218eb-3466-4d5f-a663-840a2868b242" />
+### Character Coverage Data
+<img width="566.5" height="322.5" alt="Screenshot 2026-07-19 235251" src="https://github.com/user-attachments/assets/4725277e-14b3-473c-862d-048cfa95948a" />
+<img width="569" height="503" alt="Screenshot 2026-07-19 235356" src="https://github.com/user-attachments/assets/a798790b-4531-4129-b32a-bef047295d57" />
+<img width="571" height="461" alt="Screenshot 2026-07-19 235415" src="https://github.com/user-attachments/assets/fbacade2-6b2c-4b55-9ecb-a830741b3eee" />
+<img width="1046" height="558" alt="Screenshot 2026-07-19 235447" src="https://github.com/user-attachments/assets/96115c71-dbd6-4f93-a72f-2e60c69edff6" />
+
+
 
 ## How it works
 
