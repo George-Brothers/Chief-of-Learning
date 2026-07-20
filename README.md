@@ -15,13 +15,17 @@ required to run it; an optional Neon Postgres + pgvector index adds semantic ret
 [Semantic retrieval index](#semantic-retrieval-index-optional)).
 
 ## It also comes with a dashboard (if you like that sort of thing)
-### To-do List
+### To-do list
 <img width="582.5" height="445.5" alt="Screenshot 2026-07-19 235234" src="https://github.com/user-attachments/assets/e45218eb-3466-4d5f-a663-840a2868b242" />
-### Character Coverage Data
-<img width="566.5" height="322.5" alt="Screenshot 2026-07-19 235251" src="https://github.com/user-attachments/assets/4725277e-14b3-473c-862d-048cfa95948a" />
-<img width="569" height="503" alt="Screenshot 2026-07-19 235356" src="https://github.com/user-attachments/assets/a798790b-4531-4129-b32a-bef047295d57" />
-<img width="571" height="461" alt="Screenshot 2026-07-19 235415" src="https://github.com/user-attachments/assets/fbacade2-6b2c-4b55-9ecb-a830741b3eee" />
-<img width="1046" height="558" alt="Screenshot 2026-07-19 235447" src="https://github.com/user-attachments/assets/96115c71-dbd6-4f93-a72f-2e60c69edff6" />
+
+### Quick brief of where I am + progress + where to focus
+<img width="284.5" height="251.5" alt="Screenshot 2026-07-19 235356" src="https://github.com/user-attachments/assets/a798790b-4531-4129-b32a-bef047295d57" />
+
+### More detailed
+<img width="285.5" height="230.5" alt="Screenshot 2026-07-19 235415" src="https://github.com/user-attachments/assets/fbacade2-6b2c-4b55-9ecb-a830741b3eee" />
+
+### Built in chat for the coach
+<img width="523" height="279" alt="Screenshot 2026-07-19 235447" src="https://github.com/user-attachments/assets/96115c71-dbd6-4f93-a72f-2e60c69edff6" />
 
 
 
