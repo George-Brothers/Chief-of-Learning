@@ -48,7 +48,7 @@ export async function POST(req: Request): Promise<Response> {
     // WITHOUT `&secret_token=` (Telegram then sends no header at all → providedSecret === null), or
     // with a value that doesn't match TELEGRAM_WEBHOOK_SECRET. Either way every update is dropped
     // here. Log it — otherwise the outage is completely invisible in the Vercel function logs and
-    // undiagnosable. See AGENTS.md "Telegram webhook" for the fix.
+    // undiagnosable. The fix is re-running setWebhook with a matching `&secret_token=`.
     console.warn(
       providedSecret === null
         ? "telegram webhook rejected: request carried no x-telegram-bot-api-secret-token header — " +

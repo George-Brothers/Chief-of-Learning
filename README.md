@@ -62,7 +62,7 @@ A few decisions carry most of the system's weight. Each one is a single place to
   never lose data. Document updates append the new content before deleting the old; the action queue
   only burns failures that can never succeed, so Anki being closed leaves the task queued to retry; and
   the transcript watcher parks failed pushes for replay while the cloud dedups on content hash. The
-  invariants are documented in `CLAUDE.md` and covered by tests.
+  invariants are covered by tests.
 - **Fail-open retrieval.** The optional Neon + pgvector index is a rebuildable, one-way derivative of
   Notion, which stays the source of truth. When the index is unconfigured, empty, or unreachable,
   retrieval returns nothing and the bot falls back to Notion-only. Adding it cannot break the base
